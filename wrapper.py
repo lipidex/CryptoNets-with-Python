@@ -14,7 +14,7 @@ t_list = [40961, 65537, 114689, 147457, 188417]
 class SEAL:
 
 	def __init__(self):
-		self.lib = ctypes.cdll.LoadLibrary('./SEAL/libseal.so')
+		self.lib = ctypes.cdll.LoadLibrary('./lib/wrapper/libsealwrapper.so')
 		for i in range(5):
 			if (not (
 				os.path.isfile("./keys/evaluation-"+str(i))
