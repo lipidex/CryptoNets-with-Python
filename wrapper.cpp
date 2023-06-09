@@ -1,10 +1,3 @@
-
-// A wrapper for the SEAL library. The wrapper can support basic operations such as
-// encoding, decoding and squaring, as much as initializing variables, genereting new keys
-// and freeing memory.
-//
-// The wrapper is made up of two parts. This is the C++ part.
-
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -19,25 +12,29 @@
 #include "seal/seal.h"
 #include <fstream>
 
+#include <filesystem>
+
 using namespace std;
 using namespace seal;
 
 // PARAMETERS
 EncryptionParameters *parms[5];
-std::vector<SmallModulus> q_array;
+std::vector<Modulus> q_array;
 SEALContext *context[5];
 // KEYS
 KeyGenerator *keygen[5];
-PublicKey public_key[5];
 SecretKey secret_key[5];
-EvaluationKeys ev_keys[5];
+// PublicKey public_key[5];
+// RelinKeys ev_keys[5];
 // OBJECTS
 Encryptor *encryptor[5];
 Decryptor *decryptor[5];
 Evaluator *evaluator[5];
-PolyCRTBuilder *crtbuilder[5];
+BatchEncoder *crtbuilder[5];
 int plain_poly_size = 0;
 int enc_poly_size = 0;
+// CONFIG
+size_t poly_modulus_degree = 4096;
 
 void deallocate_() {
 	for (int i=0; i<5; i++) {
@@ -64,12 +61,14 @@ void deallocate_() {
 }
 
 void generate_new_keys_() {
+	PublicKey public_key[5]; //TODO: da rispostare in un modo o nell'altro come globale
+	RelinKeys ev_keys[5];
+
 	// PARAMETERS
-	q_array = coeff_modulus_128(4096);
-	q_array.push_back(small_mods_60bit(63));
-	q_array.push_back(small_mods_60bit(42));
+	q_array = CoeffModulus::BFVDefault(poly_modulus_degree); // 128 is implicit
+
 	for (int i=0; i<5; i++) {
-		parms[i] = new EncryptionParameters;
+		parms[i] = new EncryptionParameters(scheme_type::bfv);
 	}
 
 	// --t
@@ -82,7 +81,7 @@ void generate_new_keys_() {
 	std::string file_name = "";
 	for (int i=0; i<5; i++) {
 		// --n
-		parms[i]->set_poly_modulus("1x^4096 + 1");
+		parms[i]->set_poly_modulus_degree(poly_modulus_degree);
 		// --q
 		parms[i]->set_coeff_modulus(q_array);
 
@@ -90,9 +89,9 @@ void generate_new_keys_() {
 
 		// STORE KEYS
 		keygen[i] = new KeyGenerator(*context[i]);
-		public_key[i] = keygen[i]->public_key();
+		keygen[i]->create_public_key(public_key[i]);
 		secret_key[i] = keygen[i]->secret_key();
-		keygen[i]->generate_evaluation_keys(16, ev_keys[i]); // per rilinearizzare dopo lo square
+		keygen[i]->create_relin_keys(ev_keys[i]); // per rilinearizzare dopo lo square
 		// --public
 		file_name = "./keys/public-" + std::to_string(i);
 		std::ofstream pk_stream(file_name, std::ios::out | std::ios::trunc | std::ios::binary);
@@ -112,12 +111,14 @@ void generate_new_keys_() {
 }
 
 void initialize_() {
+	PublicKey public_key[5]; //TODO: da rispostare in un modo o nell'altro come globale
+	RelinKeys ev_keys[5];
+
 	// PARAMETERS
-	q_array = coeff_modulus_128(4096);
-	q_array.push_back(small_mods_60bit(63));
-	q_array.push_back(small_mods_60bit(42));
+	q_array = CoeffModulus::BFVDefault(poly_modulus_degree); // 128 is implicit
+
 	for (int i=0; i<5; i++) {
-		parms[i] = new EncryptionParameters;
+		parms[i] = new EncryptionParameters(scheme_type::bfv);
 	}
 
 	// --t
@@ -131,18 +132,20 @@ void initialize_() {
 	plain_poly_size = 4096;
 	for (int i=0; i<5; i++) {
 		// --n
-		parms[i]->set_poly_modulus("1x^4096 + 1");
+		parms[i]->set_poly_modulus_degree(poly_modulus_degree);
 		// --q
 		parms[i]->set_coeff_modulus(q_array);
 
 		context[i] = new SEALContext(*parms[i]);
 
+		std::filesystem::path cwd = std::filesystem::current_path();
+		std::cout << cwd.string();
 		// LOAD KEYS
 		// --public
 		file_name = "./keys/public-" + std::to_string(i);
 		std::ifstream pk_stream(file_name, std::ios::in | std::ios::binary);
 		if (pk_stream) {
-			public_key[i].load(pk_stream);
+			public_key[i].load(*context[i], pk_stream);
 		} else {
 			std::cout << "Keys not found" << std::endl;
 			std::cout << "Keys not found" << std::endl;
@@ -153,7 +156,7 @@ void initialize_() {
 		file_name = "./keys/secret-" + std::to_string(i);
 		std::ifstream sk_stream(file_name, std::ios::out | std::ios::binary);
 		if (sk_stream) {
-			secret_key[i].load(sk_stream);
+			secret_key[i].load(*context[i], sk_stream);
 		} else {
 			std::cout << "Keys not found" << std::endl;
 			std::cout << "Keys not found" << std::endl;
@@ -164,19 +167,19 @@ void initialize_() {
 		file_name = "./keys/evaluation-" + std::to_string(i);
 		std::ifstream ek_stream(file_name, std::ios::out | std::ios::binary);
 		if (ek_stream) {
-			ev_keys[i].load(ek_stream);
+			ev_keys[i].load(*context[i], ek_stream);
 		} else {
 			std::cout << "Keys not found" << std::endl;
 			std::cout << "Keys not found" << std::endl;
 			throw;
 		}
 		ek_stream.close();
-
+		
 		// OBJECTS
 		encryptor[i] = new Encryptor(*context[i], public_key[i]);
 		evaluator[i] = new Evaluator(*context[i]);
 		decryptor[i] = new Decryptor(*context[i], secret_key[i]);
-		crtbuilder[i] = new PolyCRTBuilder(*context[i]);
+		crtbuilder[i] = new BatchEncoder(*context[i]);
 	}
 
 	// compute sizes of polynomials
@@ -200,10 +203,10 @@ void encrypt_tensor_(uint64_t *array_input, uint64_t *array_output, int input_ax
 					plain_vector[plain_index] = array_input[input_index+(plain_index*data_size*5)];
 				}
 				Plaintext plain_poly;
-				crtbuilder[t_index]->compose(plain_vector, plain_poly);
+				crtbuilder[t_index]->encode(plain_vector, plain_poly);
 				Ciphertext encrypted_poly;
 				encryptor[t_index]->encrypt(plain_poly, encrypted_poly);
-				const uint64_t *encrypted_array = encrypted_poly.pointer();
+				const uint64_t *encrypted_array = encrypted_poly.data();
 				for (int enc_index=0; enc_index<enc_poly_size; enc_index++) {
 					array_output[output_index+(enc_index*data_size*5)] = encrypted_array[enc_index];
 				}
@@ -225,10 +228,10 @@ void encrypt_tensor_(uint64_t *array_input, uint64_t *array_output, int input_ax
 					plain_vector[plain_index] = 0;
 				}
 				Plaintext plain_poly;
-				crtbuilder[t_index]->compose(plain_vector, plain_poly);
+				crtbuilder[t_index]->encode(plain_vector, plain_poly);
 				Ciphertext encrypted_poly;
 				encryptor[t_index]->encrypt(plain_poly, encrypted_poly);
-				const uint64_t *encrypted_array = encrypted_poly.pointer();
+				const uint64_t *encrypted_array = encrypted_poly.data();
 				for (int enc_index=0; enc_index<enc_poly_size; enc_index++) {
 					array_output[output_index+(enc_index*data_size*5)] = encrypted_array[enc_index];
 				}
@@ -254,11 +257,11 @@ void decrypt_tensor_(uint64_t *array_input, uint64_t *array_output, int output_a
 				for (int enc_index=0; enc_index<enc_poly_size; enc_index++) {
 					enc_vector[enc_index] = array_input[input_index+(enc_index*data_size*5)];
 				}
-				Ciphertext encrypted_poly(*parms[t_index], 2, enc_vector);
+				Ciphertext encrypted_poly(*parms[t_index]); //,2 , enc_vector); //TODO: verificare se giusto (sembra che il primo parametro sia di default nel costruttore, il secondo creato internamente poi)
 				Plaintext plain_poly;
 				decryptor[t_index]->decrypt(encrypted_poly, plain_poly);
 				vector<uint64_t> plain_vector_output;
-				crtbuilder[t_index]->decompose(plain_poly, plain_vector_output);
+				crtbuilder[t_index]->decode(plain_poly, plain_vector_output);
 				for (int plain_index=0; plain_index<plain_poly_size; plain_index++) {
 					array_output[output_index+(plain_index*data_size*5)] = plain_vector_output[plain_index];
 				}                
@@ -276,11 +279,11 @@ void decrypt_tensor_(uint64_t *array_input, uint64_t *array_output, int output_a
 				for (int enc_index=0; enc_index<enc_poly_size; enc_index++) {
 					enc_vector[enc_index] = array_input[input_index+(enc_index*data_size*5)];
 				}
-				Ciphertext encrypted_poly(*parms[t_index], 2, enc_vector);
+				Ciphertext encrypted_poly(*parms[t_index]); //,2 , enc_vector); //TODO: verificare se giusto (sembra che il primo parametro sia di default nel costruttore, il secondo creato internamente poi)
 				Plaintext plain_poly;
 				decryptor[t_index]->decrypt(encrypted_poly, plain_poly);
 				vector<uint64_t> plain_vector_output;
-				crtbuilder[t_index]->decompose(plain_poly, plain_vector_output);
+				crtbuilder[t_index]->decode(plain_poly, plain_vector_output);
 				for (int plain_index=0; plain_index<last_group_size; plain_index++) {
 					array_output[output_index+(plain_index*data_size*5)] = plain_vector_output[plain_index];
 				}                
@@ -292,6 +295,9 @@ void decrypt_tensor_(uint64_t *array_input, uint64_t *array_output, int output_a
 }
 
 void square_tensor_(uint64_t *array_input, uint64_t *array_output, int input_axis0_size, int data_size) {
+	RelinKeys ev_keys[5]; //TODO: da rispostare in un modo o nell'altro come globale
+	
+
 	int poly_groups_count = input_axis0_size / enc_poly_size;
 	int input_index = 0;
 	int output_index = 0;
@@ -305,11 +311,12 @@ void square_tensor_(uint64_t *array_input, uint64_t *array_output, int input_axi
 				for (int enc_index=0; enc_index<enc_poly_size; enc_index++) {
 					enc_vector[enc_index] = array_input[input_index+(enc_index*data_size*5)];
 				}
-				Ciphertext encrypted_poly(*parms[t_index], 2, enc_vector);
-				encrypted_poly.unalias();
-				evaluator[t_index]->square(encrypted_poly);
-				evaluator[t_index]->relinearize(encrypted_poly, ev_keys[t_index]);
-				const uint64_t *encrypted_array = encrypted_poly.pointer();
+
+				Ciphertext encrypted_poly(*parms[t_index]); //, 2, enc_vector);  //,2 , enc_vector); //TODO: verificare se giusto (sembra che il primo parametro sia di default nel costruttore, il secondo creato internamente poi)
+				// encrypted_poly.unalias(); //TODO: forse non necessario˜
+				evaluator[t_index]->square_inplace(encrypted_poly);
+				evaluator[t_index]->relinearize_inplace(encrypted_poly, ev_keys[t_index]);
+				const uint64_t *encrypted_array = encrypted_poly.data();
 				for (int enc_index=0; enc_index<enc_poly_size; enc_index++) {
 					array_output[output_index+(enc_index*data_size*5)] = encrypted_array[enc_index];
 				}                
@@ -343,246 +350,10 @@ extern "C"
 
 }
 
-/* old code
-
-void print_parameters(const SEALContext &context)
-{
-	cout << "/ Encryption parameters:" << endl;
-	cout << "| poly_modulus: " << context.poly_modulus().to_string() << endl;
-	cout << "| poly_modulus.coeff_count: " << context.poly_modulus().coeff_count() << endl;
-	cout << "| coeff_modulus size: " << context.total_coeff_modulus().significant_bit_count() << " bits" << endl;
-	cout << "| coeff_modulus size: " << context.coeff_modulus().size() << endl;
-	cout << "| plain_modulus: " << context.plain_modulus().value() << endl;
-	cout << "\\ noise_standard_deviation: " << context.noise_standard_deviation() << endl;
-	cout << endl;
+/*
+int main() {
+	// generate_new_keys_();
+	initialize_();
+	return 0;
 }
-
-void stampa_vettore(const vector<uint64_t> &vettore, int limite = -1) {
-	int nd0 = 0;
-	for (int i = 0; i < vettore.size(); i++)
-	{
-		if (limite!=-1)
-			if (i>limite) {
-				cout << "[...] ";
-				break;
-			}
-		if (vettore[i]==0) {
-			if (nd0!=-1)
-				nd0++;
-		} else {
-			nd0 = 0;
-		}
-		if (nd0==3) {
-			nd0 = -1;
-			cout << "[...] ";
-		}
-		if (nd0!=-1)
-			cout << vettore[i] << " ";
-	}
-	cout << endl;
-}
-
-//----------------------------------------OPERAZIONI----------------------------------------
-
-void somma_tra_polinomi(Ciphertext &encrypted_input1, Ciphertext &encrypted_input2, Decryptor decryptor, EncryptionParameters parms, SEALContext context)
-{
-	cout << "SOMA TRA DUE POLINOMI:" << endl;
-	int size = encrypted_input1.size();
-	if (size!=2) {
-		cout << "\tERRORE, SI LAVORA SOLO CON SIZE = 2" << endl;
-		return;
-	}
-	const uint64_t *array_input1 = encrypted_input1.pointer();
-	const uint64_t *array_input2 = encrypted_input2.pointer();
-	int n = encrypted_input1.poly_coeff_count();
-	int q_size = encrypted_input1.coeff_mod_count();
-	uint64_t q[q_size];
-	for (int i=0; i<q_size; i++)
-		q[i] = parms.coeff_modulus()[i].value();
-	uint64_t array_output[n * q_size * size];
-
-	PolyCRTBuilder crtbuilder(context);
-	Plaintext plain_input1;
-	decryptor.decrypt(encrypted_input1, plain_input1);
-	vector<uint64_t> plain_vector1;
-	crtbuilder.decompose(plain_input1, plain_vector1);
-	Plaintext plain_input2;
-	decryptor.decrypt(encrypted_input2, plain_input2);
-	vector<uint64_t> plain_vector2;
-	crtbuilder.decompose(plain_input2, plain_vector2);
-	cout << "\t" << "Polinomio 1: ";
-	stampa_vettore(plain_vector1);
-	cout << "\t" << "Polinomio 2: ";
-	stampa_vettore(plain_vector2);
-	cout << "\t" << "budget 1 prima: " << decryptor.invariant_noise_budget(encrypted_input1) << " bits" << endl;
-	cout << "\t" << "budget 2 prima: " << decryptor.invariant_noise_budget(encrypted_input2) << " bits" << endl;
-
-	int index = -1;
-	for (int index_on_size=0; index_on_size<2; index_on_size++){
-		for (int index_on_q_size=0; index_on_q_size<q_size; index_on_q_size++){
-			for (int index_on_n=0; index_on_n<n; index_on_n++){
-				index = index_on_size * q_size * n;
-				index += index_on_q_size * n;
-				index += index_on_n;
-				array_output[index] = (array_input1[index] + array_input2[index]) % q[index_on_q_size];
-			}
-		}
-	}
-
-	Ciphertext encrypted_output(parms, 2, array_output);
-	Plaintext plain_output;
-	decryptor.decrypt(encrypted_output, plain_output);
-	vector<uint64_t> plain_vector_output;
-	crtbuilder.decompose(plain_output, plain_vector_output);
-	cout << "\t" << "Risultato: ";
-	stampa_vettore(plain_vector_output);
-	cout << "\t" << "budget dopo: " << decryptor.invariant_noise_budget(encrypted_output) << " bits" << endl;
-}
-
-void prodotto_polinomio_scalare(Ciphertext &encrypted_input, int scalar, Decryptor decryptor, EncryptionParameters parms, SEALContext context)
-{
-	cout << "PRODOTTO TRA UN POLINOMIO E UNO SCALARE:" << endl;
-	int size = encrypted_input.size();
-	if (size!=2) {
-		cout << "\tERRORE, SI LAVORA SOLO CON SIZE = 2" << endl;
-		return;
-	}
-	const uint64_t *array_input = encrypted_input.pointer();
-	int n = encrypted_input.poly_coeff_count();
-	int q_size = encrypted_input.coeff_mod_count();
-	uint64_t q[q_size];
-	for (int i=0; i<q_size; i++)
-		q[i] = parms.coeff_modulus()[i].value();
-	uint64_t array_output[n * q_size * size];
-
-	PolyCRTBuilder crtbuilder(context);
-	Plaintext plain_input;
-	decryptor.decrypt(encrypted_input, plain_input);
-	vector<uint64_t> plain_vector;
-	crtbuilder.decompose(plain_input, plain_vector);
-	cout << "\t" << "Polinomio: ";
-	stampa_vettore(plain_vector);
-	cout << "\t" << "Scalare: " << scalar << endl;
-	cout << "\t" << "budget prima: " << decryptor.invariant_noise_budget(encrypted_input) << " bits" << endl;
-
-	int index = -1;
-	for (int index_on_size=0; index_on_size<2; index_on_size++){
-		for (int index_on_q_size=0; index_on_q_size<q_size; index_on_q_size++){
-			for (int index_on_n=0; index_on_n<n; index_on_n++){
-				index = index_on_size * q_size * n;
-				index += index_on_q_size * n;
-				index += index_on_n;
-				array_output[index] = (array_input[index] * scalar) % q[index_on_q_size];
-			}
-		}
-	}
-
-	Ciphertext encrypted_output(parms, 2, array_output);
-	Plaintext plain_output;
-	decryptor.decrypt(encrypted_output, plain_output);
-	vector<uint64_t> plain_vector_output;
-	crtbuilder.decompose(plain_output, plain_vector_output);
-	cout << "\t" << "Risultato: ";
-	stampa_vettore(plain_vector_output);
-	cout << "\t" << "budget dopo: " << decryptor.invariant_noise_budget(encrypted_output) << " bits" << endl;
-}
-
-void somma_polinomio_scalare(Ciphertext &encrypted_input, int scalar, uint64_t *k, int limit, Decryptor decryptor, EncryptionParameters parms, SEALContext context)
-{
-	cout << "SOMMA TRA UN POLINOMIO E UNO SCALARE:" << endl;
-	int size = encrypted_input.size();
-	if (size!=2) {
-		cout << "\tERRORE, SI LAVORA SOLO CON SIZE = 2" << endl;
-		return;
-	}
-	const uint64_t *array_input = encrypted_input.pointer();
-	int n = encrypted_input.poly_coeff_count();
-	int q_size = encrypted_input.coeff_mod_count();
-	uint64_t q[q_size];
-	for (int i=0; i<q_size; i++)
-		q[i] = parms.coeff_modulus()[i].value();
-	uint64_t array_output[n * q_size * size];
-
-	PolyCRTBuilder crtbuilder(context);
-	Plaintext plain_input;
-	decryptor.decrypt(encrypted_input, plain_input);
-	vector<uint64_t> plain_vector;
-	crtbuilder.decompose(plain_input, plain_vector);
-	cout << "\t" << "Polinomio: ";
-	stampa_vettore(plain_vector);
-	cout << "\t" << "Scalare: " << scalar << endl;
-	cout << "\t" << "budget prima: " << decryptor.invariant_noise_budget(encrypted_input) << " bits" << endl;
-
-	int index = -1;
-	uint64_t temp = -1;
-	for (int index_on_q_size=0; index_on_q_size<q_size; index_on_q_size++){
-		for (int index_on_n=0; index_on_n<n; index_on_n++){
-			index = index_on_q_size * n;
-			index += index_on_n;
-			temp = (scalar * k[index_on_q_size]) % q[index_on_q_size];
-			if (index_on_n>0) temp = 0;
-			array_output[index] = (array_input[index] + temp) % q[index_on_q_size];
-		}
-	}
-
-	for (int index_on_q_size=0; index_on_q_size<q_size; index_on_q_size++){
-		for (int index_on_n=0; index_on_n<n; index_on_n++){
-			index = q_size * n;
-			index += index_on_q_size * n;
-			index += index_on_n;
-			array_output[index] = array_input[index];
-		}
-	}
-
-	Ciphertext encrypted_output(parms, 2, array_output);
-	Plaintext plain_output;
-	decryptor.decrypt(encrypted_output, plain_output);
-	vector<uint64_t> plain_vector_output;
-	crtbuilder.decompose(plain_output, plain_vector_output);
-	cout << "\t" << "Risultato: ";
-	stampa_vettore(plain_vector_output, 7);
-	cout << "\t" << "budget dopo: " << decryptor.invariant_noise_budget(encrypted_output) << " bits" << endl;
-}
-
-void quadrato_dei_coefficienti(Ciphertext &encrypted_input, Decryptor decryptor, EncryptionParameters parms, EvaluationKeys ev_keys, Evaluator evaluator, SEALContext context)
-{
-	cout << "ELEVAZIONE AL QUADRATO DI UN POLINOMIO:" << endl;
-	int size = encrypted_input.size();
-	if (size!=2) {
-		cout << "\tERRORE, SI LAVORA SOLO CON SIZE = 2" << endl;
-		return;
-	}
-
-	PolyCRTBuilder crtbuilder(context);
-	Plaintext plain_input;
-	decryptor.decrypt(encrypted_input, plain_input);
-	vector<uint64_t> plain_vector;
-	crtbuilder.decompose(plain_input, plain_vector);
-	cout << "\t" << "Polinomio: ";
-	stampa_vettore(plain_vector);
-	cout << "\t" << "budget prima: " << decryptor.invariant_noise_budget(encrypted_input) << " bits" << endl;
-	cout << "\t" << "Size prima: " << size << endl;
-
-	evaluator.square(encrypted_input);
-	cout << "\t" << "Size dopo square: " << encrypted_input.size() << endl;
-	cout << "\t" << "budget dopo square: " << decryptor.invariant_noise_budget(encrypted_input) << " bits" << endl;
-
-	evaluator.relinearize(encrypted_input, ev_keys);
-	int budget = decryptor.invariant_noise_budget(encrypted_input);
-	cout << "\t" << "Size dopo relienarize: " << encrypted_input.size() << endl;
-	cout << "\t" << "budget dopo relienarize: " << budget << " bits" << endl;
-
-	if (budget==0) {
-		cout << "\tbudget esaurito, terminazione anticipata" << endl;
-		return;
-	}
-
-	Plaintext plain_output;
-	decryptor.decrypt(encrypted_input, plain_output);
-	vector<uint64_t> plain_vector_output;
-	crtbuilder.decompose(plain_output, plain_vector_output);
-	cout << "\t" << "Risultato: ";
-	stampa_vettore(plain_vector_output);
-}
-
 */

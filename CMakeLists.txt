@@ -1,6 +1,3 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
-# Licensed under the MIT license.
-
 cmake_minimum_required(VERSION 3.13)
 
 project(SEALExamples VERSION 4.1.1 LANGUAGES CXX)
@@ -20,7 +17,7 @@ if(SEAL_BUILD_EXAMPLES)
 
     target_sources(sealwrapper
         PRIVATE
-            ${CMAKE_CURRENT_LIST_DIR}/new_wrapper.cpp
+            ${CMAKE_CURRENT_LIST_DIR}/wrapper.cpp
     )
 
     if(TARGET SEAL::seal)
