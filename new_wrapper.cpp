@@ -24,8 +24,8 @@ SEALContext *context[5];
 // KEYS
 KeyGenerator *keygen[5];
 SecretKey secret_key[5];
-PublicKey public_key[5];
-RelinKeys ev_keys[5];
+// PublicKey public_key[5];
+// RelinKeys ev_keys[5];
 // OBJECTS
 Encryptor *encryptor[5];
 Decryptor *decryptor[5];
@@ -61,8 +61,8 @@ void deallocate_() {
 }
 
 void generate_new_keys_() {
-	// PublicKey public_key[5]; //TODO: da rispostare in un modo o nell'altro come globale
-	// RelinKeys ev_keys[5];
+	PublicKey public_key[5]; //TODO: da rispostare in un modo o nell'altro come globale
+	RelinKeys ev_keys[5];
 
 	// PARAMETERS
 	q_array = CoeffModulus::BFVDefault(poly_modulus_degree); // 128 is implicit
@@ -111,8 +111,8 @@ void generate_new_keys_() {
 }
 
 void initialize_() {
-	// PublicKey public_key[5]; //TODO: da rispostare in un modo o nell'altro come globale
-	// RelinKeys ev_keys[5];
+	PublicKey public_key[5]; //TODO: da rispostare in un modo o nell'altro come globale
+	RelinKeys ev_keys[5];
 
 	// PARAMETERS
 	q_array = CoeffModulus::BFVDefault(poly_modulus_degree); // 128 is implicit
@@ -295,7 +295,7 @@ void decrypt_tensor_(uint64_t *array_input, uint64_t *array_output, int output_a
 }
 
 void square_tensor_(uint64_t *array_input, uint64_t *array_output, int input_axis0_size, int data_size) {
-	// RelinKeys ev_keys[5]; //TODO: da rispostare in un modo o nell'altro come globale
+	RelinKeys ev_keys[5]; //TODO: da rispostare in un modo o nell'altro come globale
 	
 
 	int poly_groups_count = input_axis0_size / enc_poly_size;
